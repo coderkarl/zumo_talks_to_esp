@@ -30,6 +30,10 @@ int16_t Kp = 1;
 unsigned long serialdata;
 int inbyte = 0;
 
+uint8_t nBytes = 0;
+uint8_t k = 0;
+uint8_t data[16] = {0};
+
 Zumo32U4IMU imu;
 Zumo32U4Encoders encoders;
 Zumo32U4Motors motors;
@@ -94,88 +98,50 @@ void loop()
 
   // A3/4/ encoder request
   // A1/1/speed_byte,curv_byte
-  // A2/1/autoblade/
+
+  // Consider making nBytes, k, data global
+  //   and set k = 0 when you might have a start byte
+  //   in the middle of expected group of bytes
+  // Instead of setting k = 0, simply set startIndex = k-1
+  //   Then change the if statements to check data[(startIndex+j)%7
 
   if(ZSERIAL.available())
   {
     while(ZSERIAL.available())
     {
-      uint8_t b = ZSERIAL.read();
-      Serial.print(b); Serial.print(",");
+      data[k] = ZSERIAL.read();
+      ++k;
+      if(k > 7)
+      {
+        k = 0;
+      }
+      //Serial.print(data[k]); Serial.print(",");
     }
-    Serial.println();
-  }
-  
-  if(ZSERIAL.read() == 'B'){
-    getSerial();
-    switch(serialdata)
-    {
-      case 1: // A1/
-      {
-        getSerial(); // A1/1,2,3,4/
-        switch (serialdata)
-        {
-          case 1: // A1/1/
-          {
-            timePING = millis();
-            // Read the next two numbers <raw speed 0 to 240>/<raw omega 0 to 240>/
-            if(ZSERIAL.available())
-            {
-              speed_cm = (int8_t)ZSERIAL.read(); //getSerial()-120;
-            }
-            if(ZSERIAL.available())
-            {
-              omega_deg = (int8_t)ZSERIAL.read(); //getSerial()-120;
-              //uint8_t b3 = ZSERIAL.read();
-              //uint8_t b4 = ZSERIAL.read();              
-              Serial.print("speed cm "); Serial.print(speed_cm);
-              Serial.print(", omega deg "); Serial.println(omega_deg);
-              //Serial.print(b3); Serial.print(","); Serial.println(b4);
-              //Serial.println((int8_t)255); //confirmed (int8_t)255 is -1
-            }
-            ZSERIAL.flush();
-            break;
-          }
-        }
-        break;
-      } // end A1/
-      case 3: // A3/
-      {
-        getSerial(); // A3/1,2,3,4/
-        switch (serialdata)
-        {
-          case 4: // A3/4/
-          {
-            //encLeft/Right read and reset
-            ZSERIAL.write(int8_t(encoders.getCountsAndResetLeft()));
-            ZSERIAL.write(int8_t(encoders.getCountsAndResetRight()));
-            ZSERIAL.write(highByte(int16_t(gz_raw)));
-            ZSERIAL.write(lowByte(int16_t(gz_raw)));
-            //Serial.println(int(delta_yaw_deg*1000));
-            //delta_yaw_deg = 0.0;
-            break;
-          }
-        }
-        break;
-      } // end A3/
-    } // end switch serialdata
+    //Serial.println();
+    ZSERIAL.flush();
   }
 
-}
-
-long getSerial()
-{
-  serialdata = 0;
-  while (inbyte != '/')
+  if(k == 5 && data[0] == 'A' && data[1] == '3' && data[2] == '/' && data[3] == '4' && data[4] == '/')
   {
-    inbyte = ZSERIAL.read(); 
-    if (inbyte > 0 && inbyte != '/')
-    {
-      serialdata = serialdata * 10 + inbyte - '0';
-    }
+    // A3/4/
+    //encLeft/Right read and reset
+    ZSERIAL.write(int8_t(encoders.getCountsAndResetLeft()));
+    ZSERIAL.write(int8_t(encoders.getCountsAndResetRight()));
+    ZSERIAL.write(highByte(int16_t(gz_raw)));
+    ZSERIAL.write(lowByte(int16_t(gz_raw)));
+    k = 0;
   }
-  inbyte = 0;
-  return serialdata;
+  else if(k == 7 && data[0] == 'A' && data[1] == '1' && data[2] == '/' && data[3] == '1' && data[4] == '/')
+  {
+    timePING = millis(); // A1/1/
+    // Read the next two numbers <raw speed 0 to 240>/<raw omega 0 to 240>/
+    speed_cm = (int8_t)data[5];
+    omega_deg = (int8_t)data[6];         
+    Serial.print("speed cm "); Serial.print(speed_cm);
+    Serial.print(", omega deg "); Serial.println(omega_deg);
+    k = 0;
+  }
+
 }
 
 uint16_t timeSince(uint16_t startTime)
