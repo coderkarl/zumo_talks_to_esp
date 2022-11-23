@@ -7,6 +7,7 @@
 #include <std_msgs/msg/string.h>
 #include <geometry_msgs/msg/point32.h>
 #include <geometry_msgs/msg/twist.h>
+#include <std_msgs/msg/u_int8_multi_array.h>
 
 #include <stdio.h>
 #include <unistd.h>
@@ -20,7 +21,7 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
-#define BUF_SIZE 4096
+#define BUF_SIZE 1024
 #define ZUMO_UART_READ_WAIT_MS 50
 #define ZUMO_UART_NUM UART_NUM_2
 
@@ -57,12 +58,14 @@ size_t zumo_read_bytes(uint8_t * buf, size_t len){
 #define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Continuing.\n",__LINE__,(int)temp_rc);}}
 
 rcl_publisher_t odom_data_publisher;
+rcl_publisher_t prox_array_publisher;
 rcl_publisher_t string_publisher;
 rcl_subscription_t cmd_vel_subscriber;
 
 std_msgs__msg__String output_str;
 geometry_msgs__msg__Point32 odom_data;
 geometry_msgs__msg__Twist cmd_vel;
+std_msgs__msg__UInt8MultiArray prox_array;
 
 #define WHEEL_BASE_METERS 0.1
 
@@ -108,8 +111,8 @@ void odom_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
         
         const char data_req_cmd[5] = {'A', '3', '/', '4', '/'};
         uart_write_bytes(ZUMO_UART_NUM, (const char *) data_req_cmd, 5);
-        uint8_t *zumo_data = (uint8_t *) malloc(BUF_SIZE); // Remember free(zumo_data); at end of function
-        //uint8_t zumo_data[BUF_SIZE];
+        //uint8_t *zumo_data = (uint8_t *) malloc(BUF_SIZE); // Remember free(zumo_data); at end of function
+        uint8_t zumo_data[BUF_SIZE];
         int len = 0;
         if(1)
         {
@@ -127,11 +130,19 @@ void odom_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
         int8_t delta_enc_left = 0;
         int8_t delta_enc_right = 0;
         int16_t yaw_rate_raw = 0;
-        if(len >= 4)
+        uint8_t prox_left_counts = 0;
+        uint8_t prox_front_left_counts = 0;
+        uint8_t prox_front_right_counts = 0;
+        uint8_t prox_right_counts = 0;
+        if(len >= 8)
         {
             delta_enc_left = zumo_data[0];
             delta_enc_right = zumo_data[1];
             yaw_rate_raw = (zumo_data[2] << 8 )+ zumo_data[3];
+            prox_left_counts = zumo_data[4];
+            prox_front_left_counts = zumo_data[5];
+            prox_front_right_counts = zumo_data[6];
+            prox_right_counts = zumo_data[7];
         }
         
         odom_data.x = delta_enc_left;
@@ -139,7 +150,13 @@ void odom_timer_callback(rcl_timer_t * timer, int64_t last_call_time)
         odom_data.z = yaw_rate_raw * 0.0091;
         RCSOFTCHECK(rcl_publish( &odom_data_publisher, (const void *) &odom_data, NULL));
         
-        free(zumo_data);
+        prox_array.data.data[0] = prox_left_counts;
+        prox_array.data.data[1] = prox_front_left_counts;
+        prox_array.data.data[2] = prox_front_right_counts;
+        prox_array.data.data[3] = prox_right_counts;
+        RCSOFTCHECK(rcl_publish( &prox_array_publisher, (const void *) &prox_array, NULL));
+        
+        //free(zumo_data);
 
 		// Fill the message timestamp
 		//struct timespec ts;
@@ -195,7 +212,7 @@ void cmd_vel_subscription_callback(const void * msgin)
 
 void appMain(void *argument)
 {
-    printf("HELLO****************");
+    printf("HELLO****************\n");
 	rcl_allocator_t allocator = rcl_get_default_allocator();
 	rclc_support_t support;
 
@@ -211,8 +228,12 @@ void appMain(void *argument)
 		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String), "/zumo_output"));
 
 	// Create a best effort pong publisher
-	RCCHECK(rclc_publisher_init_best_effort(&odom_data_publisher, &node,
+	RCCHECK(rclc_publisher_init_default(&odom_data_publisher, &node,
 		ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Point32), "/odom_data"));
+     
+     // Create a zumo_prox publisher
+	RCCHECK(rclc_publisher_init_default(&prox_array_publisher, &node,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8MultiArray), "/zumo_prox"));   
 
 	// Create a best effort ping subscriber
 	RCCHECK(rclc_subscription_init_best_effort(&cmd_vel_subscriber, &node,
@@ -235,6 +256,10 @@ void appMain(void *argument)
 	output_str.data.size = 0;
 	output_str.data.capacity = STRING_BUFFER_LEN;
     
+    prox_array.data.data = (uint8_t*) malloc(4*sizeof(uint8_t));
+    prox_array.data.size = 4;
+    prox_array.data.capacity = 4;
+    
     zumo_init_serial();
 
 	while(1){
@@ -244,8 +269,10 @@ void appMain(void *argument)
 
 	// Free resources
 	RCCHECK(rcl_publisher_fini(&odom_data_publisher, &node));
+    RCCHECK(rcl_publisher_fini(&prox_array_publisher, &node));
 	RCCHECK(rcl_publisher_fini(&string_publisher, &node));
 	RCCHECK(rcl_subscription_fini(&cmd_vel_subscriber, &node));
 	RCCHECK(rcl_node_fini(&node));
     free(output_str.data.data);
+    free(prox_array.data.data);
 }

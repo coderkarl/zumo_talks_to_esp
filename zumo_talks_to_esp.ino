@@ -2,6 +2,7 @@
 #include <Zumo32U4.h>
 
 #define GYRO_PERIOD 20
+#define PROX_PERIOD 100
 
 #define BOT_RADIUS_CM 4.5
 #define CMD_PERIOD 100
@@ -13,6 +14,7 @@
 long timeCMD;
 long gyro_time;
 long timePING;
+long prox_time;
 
 int gz_raw;
 int8_t speed_cm = 0;
@@ -34,13 +36,20 @@ uint8_t nBytes = 0;
 uint8_t k = 0;
 uint8_t data[16] = {0};
 
+uint8_t prox_front_left_counts = 0;
+uint8_t prox_front_right_counts = 0;
+uint8_t prox_left_counts = 0;
+uint8_t prox_right_counts = 0;
+
 Zumo32U4IMU imu;
 Zumo32U4Encoders encoders;
 Zumo32U4Motors motors;
+Zumo32U4ProximitySensors proxSensors;
 
 void setup()
 {
   motors.setSpeeds(0, 0);
+  proxSensors.initThreeSensors();
   ZSERIAL.begin(115200);
   Serial.begin(9600);
   
@@ -73,6 +82,16 @@ void loop()
     //gyro_z = (gyro.z()+GYRO_BIAS_DEG) * GYRO_SCALE_FACTOR;
     //delta_yaw_deg += gyro_z*dt;
     //yaw_deg += gyro_z*dt;
+  }
+
+  if(timeSince(prox_time) > PROX_PERIOD)
+  {
+    prox_time = millis();
+    proxSensors.read();
+    prox_front_left_counts = proxSensors.countsFrontWithLeftLeds();
+    prox_front_right_counts = proxSensors.countsFrontWithRightLeds();
+    prox_left_counts = proxSensors.countsLeftWithLeftLeds();
+    prox_right_counts = proxSensors.countsRightWithRightLeds();
   }
 
   if(timeSince(timePING) > PING_LIMIT_PERIOD)
@@ -129,6 +148,10 @@ void loop()
     ZSERIAL.write(int8_t(encoders.getCountsAndResetRight()));
     ZSERIAL.write(highByte(int16_t(gz_raw)));
     ZSERIAL.write(lowByte(int16_t(gz_raw)));
+    ZSERIAL.write(prox_left_counts);
+    ZSERIAL.write(prox_front_left_counts);
+    ZSERIAL.write(prox_front_right_counts);
+    ZSERIAL.write(prox_right_counts);
     k = 0;
   }
   else if(k == 7 && data[0] == 'A' && data[1] == '1' && data[2] == '/' && data[3] == '1' && data[4] == '/')
